@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { TextField, Switch, Button } from "@mui/material";
 import socket from "../utils/Socket";
+import { BACKEND_URL } from "../utils/backend";
 
-const RACEGPT_SAMPLE_WINDOW = 120;
+const TERN_SAMPLE_WINDOW = 120;
 
 export default function SideBar({ open }: { open: boolean }) {
   const [manual, setManual] = useState<boolean>(true);
@@ -22,17 +23,17 @@ export default function SideBar({ open }: { open: boolean }) {
     setIsRequestPending(true);
 
     try {
-      const telemetryWindow = socket.getData().slice(-RACEGPT_SAMPLE_WINDOW);
+      const telemetryWindow = socket.getData().slice(-TERN_SAMPLE_WINDOW);
 
       if (telemetryWindow.length === 0) {
         setResponse((prev) => [
-          "Waiting for live telemetry data for RaceGPT",
+          "Waiting for live telemetry data for Tern",
           ...prev,
         ]);
         return;
       }
 
-      const response = await fetch("http://localhost:8000/racegpt", {
+      const response = await fetch(`${BACKEND_URL}/tern`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: telemetryWindow }),
@@ -43,10 +44,10 @@ export default function SideBar({ open }: { open: boolean }) {
       }
 
       const result = await response.json();
-      setResponse((prev) => [result.verdict, ...prev]);
+      setResponse((prev) => [result.answer, ...prev]);
       console.log("Success:", result);
     } catch (error) {
-      setResponse((prev) => ["Error: RaceGPT failed to respond", ...prev]);
+      setResponse((prev) => ["Error: Tern failed to respond", ...prev]);
       console.error("Error:", error);
     } finally {
       requestInFlightRef.current = false;
@@ -114,8 +115,11 @@ export default function SideBar({ open }: { open: boolean }) {
       className={`min-w-64 w-[20%] gap-3 h-full m-0 bg-[#232526] text-gray-200 p-6 pt-12 fixed top-0 ${open ? "right-0" : "right-[min(-20%,calc(var(--spacing)*(-72)))]"} z-99 transition-all duration-300 ease-in-out shadow-[-10px_0px_15px_-3px_rgba(0,0,0,0.1)] flex flex-col items-center justify-between`}
     >
       <div className="flex justify-between flex-col w-full gap-3">
-        <h2 className="text-center mt-[5vh] text-lg font-semibold uppercase tracking-[0.26em] text-white/78">
-          RaceGPT Copilot
+        <h2
+          className="text-center mt-[5vh] text-lg font-semibold uppercase tracking-[0.26em] text-white/78"
+          data-testid="tern-panel"
+        >
+          Tern Copilot
         </h2>
         <SideBarTile className="flex flex-row items-center gap-2 justify-center text-[0.75em] 2xl:text-lg">
           <p>M A N U A L</p>
@@ -126,14 +130,19 @@ export default function SideBar({ open }: { open: boolean }) {
       <SideBarTile className="h-full">
         {response.length == 0 ? (
           <div className="h-full w-full flex justify-center items-center">
-            <h3 className="text-white/55">Nothing to see here</h3>
+            <h3 className="text-white/55" data-testid="tern-empty">
+              Nothing to see here
+            </h3>
           </div>
         ) : (
-          <ol className="pl-0 counter-reset-item flex flex-col-reverse justify-between gap-1 overflow-y-scroll [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          <ol
+            data-testid="tern-answers"
+            className="pl-0 counter-reset-item flex flex-col-reverse justify-between gap-1 overflow-y-scroll [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             {response.map((res, i) => {
               return (
                 <li
                   key={i}
+                  data-testid="tern-answer"
                   className={`flex border border-white/8 bg-black/18 px-3 py-2.5 text-left text-wrap rounded-md ${res.split(" ")[0] === "Error:" ? "text-[#c41e3a]" : "text-slate-100"}`}
                 >
                   <span className="block h-full mr-2 font-black">
@@ -162,8 +171,9 @@ export default function SideBar({ open }: { open: boolean }) {
             },
           }}
           disabled={isRequestPending}
+          data-testid="tern-ask"
         >
-          {isRequestPending ? "Waiting For RaceGPT..." : "Request Response"}
+          {isRequestPending ? "Waiting For Tern..." : "Request Response"}
         </Button>
       ) : (
         <TextField

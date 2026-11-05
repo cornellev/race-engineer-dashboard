@@ -43,6 +43,7 @@ export default function CompactChart({
   secondarySeries,
   isPaused,
   onTogglePause,
+  testId,
 }: {
   data: number[];
   rawTimestamps: number[];
@@ -55,6 +56,8 @@ export default function CompactChart({
   secondarySeries?: SecondarySeries;
   isPaused: boolean;
   onTogglePause: () => void;
+  /** data-testid for Playwright: `${testId}-value` and `${testId}-secondary-value`. */
+  testId?: string;
 }) {
   const latestPointOnly = data.map((value, index) =>
     index === data.length - 1 ? value : null,
@@ -206,12 +209,18 @@ export default function CompactChart({
         </div>
 
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-          <div className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 text-xs font-medium text-white/88">
+          <div
+            className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 text-xs font-medium text-white/88"
+            data-testid={testId && `${testId}-value`}
+          >
             {currentValue}
           </div>
 
           {secondarySeries && (
-            <div className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 text-xs font-medium text-white/88">
+            <div
+              className="rounded-full border border-white/10 bg-black/25 px-2.5 py-1 text-xs font-medium text-white/88"
+              data-testid={testId && `${testId}-secondary-value`}
+            >
               {secondarySeries.currentValue}
             </div>
           )}

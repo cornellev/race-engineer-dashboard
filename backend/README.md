@@ -39,6 +39,7 @@ The backend shares the Tailscale service network and is exposed on port `8000`.
 - `ROS_DOMAIN_ID` must match the publisher's DDS domain
 - `ROS_LOCALHOST_ONLY` controls whether ROS discovery is localhost-only
 - `DISCOVERY_SERVER_IP` is used for Fast DDS discovery setup in Docker
-- `TAILSCALE_IP` is used for remote rosbag API requests
-- `TERN_LLM_URL` is tern-llm's `/ask` endpoint (default `http://100.94.168.56:8000/ask`, the Jetson Thor)
-- `TERN_LLM_CONNECT_TIMEOUT_SEC` (3), `TERN_LLM_RESPONSE_TIMEOUT_SEC` (70, just above tern-llm's own 60s cap), `TERN_LLM_CONNECT_RETRIES` (3, connection failures only), and `TERN_LLM_DEFAULT_QUESTION` tune the bridge
+- `TAILSCALE_IP` is used for remote rosbag API requests (the bag service at `http://$TAILSCALE_IP:$ROSBAG_API_PORT`, port default 8080); `BAG_SERVICE_URL` overrides the whole URL (e.g. mock-daq's bag service in a test stack)
+- `TERN_LLM_URL` is tern-llm's `/ask` endpoint (default `http://thor.tail4ccb95.ts.net:8000/ask`, the Jetson Thor by tailnet name)
+- `TERN_LLM_CLIENT` (default `red`) identifies RED to Tern: priority in its queue, and "now / this lap" questions go to the run being recorded
+- `TERN_LLM_CONNECT_TIMEOUT_SEC` (3), `TERN_LLM_RESPONSE_TIMEOUT_SEC` (280, above Tern's own 120 s queue wait + 150 s answer limits, so Tern's clean 503/504 arrives first), `TERN_LLM_CONNECT_RETRIES` (3, connection failures and connect timeouts only), and `TERN_LLM_DEFAULT_QUESTION` tune the bridge

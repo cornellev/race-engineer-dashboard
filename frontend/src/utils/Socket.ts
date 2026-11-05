@@ -1,3 +1,4 @@
+import { backendWsUrl } from "./backend";
 export interface SocketData {
   seq: number;
   global_ts: number;
@@ -177,7 +178,7 @@ dummyData.map((data) => {
 class SocketService {
   private static instance: SocketService;
   private socket: WebSocket | null = null;
-  private url: string = `ws://127.0.0.1:8000/ws/stream`; // Replace with env variable URL
+  private url: string = backendWsUrl("/ws/stream");
   private handlers: Set<MessageHandler> = new Set();
   private reconnectInterval: number = 5000;
   private data: SocketData[] = [];

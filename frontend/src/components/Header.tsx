@@ -34,8 +34,9 @@ export default function Header(props: {
             onClick={() => {
               props.setSideBar(!props.sideBar);
             }}
+            data-testid="tern-toggle"
           >
-            RaceGPT
+            Tern
           </a>
           <a
             type="button"

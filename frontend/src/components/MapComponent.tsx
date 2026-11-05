@@ -109,7 +109,11 @@ const MapComponent = ({
           alt="Track map fallback"
           className="h-full w-full object-cover opacity-80"
         />
-        <div className="absolute bottom-4 left-4 rounded-full bg-black/60 px-3 py-1 text-sm text-white">
+        <div
+          className="absolute bottom-4 left-4 rounded-full bg-black/60 px-3 py-1 text-sm text-white"
+          data-testid="map-position"
+          data-live={hasLivePosition ? "true" : "false"}
+        >
           {position.lat.toFixed(5)}, {position.lng.toFixed(5)}
         </div>
       </div>
@@ -198,7 +202,13 @@ const MapComponent = ({
             anchorLeft="-50%"
             anchorTop="-50%"
           >
-            <div className="relative">
+            <div
+              className="relative"
+              data-testid="map-marker"
+              data-lat={position.lat}
+              data-lng={position.lng}
+              data-live={hasLivePosition ? "true" : "false"}
+            >
               {/* glow */}
               <div
                 className={`

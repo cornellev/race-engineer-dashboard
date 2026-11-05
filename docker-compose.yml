@@ -37,6 +37,7 @@ services:
       - DISCOVERY_SERVER_IP=${TAILSCALE_IP:-100.110.98.26}
       - TAILSCALE_IP=${TAILSCALE_IP:-100.110.98.26}
       - ROSBAG_API_PORT=${ROSBAG_API_PORT:-8080}
+      - BAG_SERVICE_URL=${BAG_SERVICE_URL:-}
       - TERN_LLM_URL=${TERN_LLM_URL:-http://thor.tail4ccb95.ts.net:8000/ask}
     depends_on:
       tailscale:
@@ -49,6 +50,7 @@ services:
       args:
         - VITE_GOOGLE_MAPS_API_KEY=${VITE_GOOGLE_MAPS_API_KEY:-}
         - VITE_GOOGLE_MAP_ID=${VITE_GOOGLE_MAP_ID:-}
+        - VITE_BACKEND_URL=${VITE_BACKEND_URL:-}
       dockerfile: Dockerfile
     environment:
       - VITE_GOOGLE_MAPS_API_KEY=${VITE_GOOGLE_MAPS_API_KEY:-}

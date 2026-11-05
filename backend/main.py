@@ -186,8 +186,15 @@ def root():
     return {"message": "Race Telemetry API", "status": "running"}
 
 def get_remote_bag_base_url() -> str:
+    """The car's bag service (tailscale-ros-telemetry api/server.py), which the record
+    button starts and stops. BAG_SERVICE_URL wins (e.g. mock-daq's bag service in the
+    end-to-end stack); otherwise the car's TAILSCALE_IP on ROSBAG_API_PORT (default 8080)."""
+    explicit = os.getenv("BAG_SERVICE_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
     tailscale_ip = os.getenv("TAILSCALE_IP")
-    return f"http://{tailscale_ip}:8080"
+    port = os.getenv("ROSBAG_API_PORT", "8080").strip() or "8080"
+    return f"http://{tailscale_ip}:{port}"
 
 async def forward_bag_request(method: str, path: str) -> Response:
     url = f"{get_remote_bag_base_url()}{path}"
