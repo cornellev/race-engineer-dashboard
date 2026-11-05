@@ -13,14 +13,13 @@ from rclpy.executors import SingleThreadedExecutor
 from subscriber import DataSubscriber
 from contextlib import asynccontextmanager
 import math
-import racegpt as racegpt_module
+import tern as tern_client
 import httpx
 
 from rosbag_replay import parse_rosbag_to_csv_rows
 
 DEQUE_SIZE = 1000 # for snapshot
 SAMPLE_RATE_HZ = 40  # rate at which we send data to frontend
-RACEGPT_REQUEST_TIMEOUT_SEC = float(os.getenv("RACEGPT_REQUEST_TIMEOUT_SEC", "20"))
 
 def sanitize_json(x):
     if isinstance(x, float):
@@ -165,7 +164,7 @@ async def lifespan(app: FastAPI):
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.broadcaster_task
         
-        await racegpt_module.close()
+        await tern_client.close()
 
         app.state.node.destroy_node()
         rclpy.shutdown()
@@ -202,22 +201,26 @@ async def forward_bag_request(method: str, path: str) -> Response:
         media_type=content_type,
     )
 
-racegpt_lock = asyncio.Lock()
+tern_lock = asyncio.Lock()
 
-@app.post("/racegpt")
-async def racegpt(data: dict):
-    if racegpt_lock.locked():
-        raise HTTPException(status_code=409, detail="RaceGPT reasoning already in progress")
+@app.post("/tern")
+async def ask_tern(data: dict):
+    if tern_lock.locked():
+        raise HTTPException(status_code=409, detail="A Tern question is already in progress")
 
-    async with racegpt_lock:
+    async with tern_lock:
         try:
-            print("called race-gpt...",flush=True)
-            response = await racegpt_module.get_response(data)
-        except RuntimeError as exc:
-            message = str(exc)
-            if "timed out" in message.lower():
-                raise HTTPException(status_code=504, detail="RaceGPT device did not respond") from exc
-            raise HTTPException(status_code=502, detail="RaceGPT request failed") from exc
+            response = await tern_client.get_response(data)
+        except tern_client.TernLLMBusy as exc:
+            headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+            raise HTTPException(
+                status_code=503, detail="Tern is busy answering other questions, try again shortly",
+                headers=headers,
+            ) from exc
+        except tern_client.TernLLMTimeout as exc:
+            raise HTTPException(status_code=504, detail="Tern did not respond in time") from exc
+        except tern_client.TernLLMUnavailable as exc:
+            raise HTTPException(status_code=502, detail="Tern request failed") from exc
 
     return response
 
