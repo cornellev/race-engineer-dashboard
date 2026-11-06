@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 import contextlib
 import collections
@@ -8,6 +9,7 @@ import tempfile
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, HTTPException, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from subscriber import DataSubscriber
@@ -34,11 +36,34 @@ def sanitize_json(x):
         return [sanitize_json(v) for v in x]
     return x
 
-def ros_spin_loop(node: DataSubscriber, stop_evt: threading.Event, history: collections.deque, data_ready: threading.Event):
+# After this long with no NEW message, rejoin DDS discovery (new participant). Found in the EVIL
+# end-to-end stack: when the Fast DDS discovery server restarts (the car rebooting), an already-
+# running subscriber is never matched to the car's new publisher, so the dashboard stays dark
+# until the backend is restarted. Rejoining is cheap when the car is simply off.
+REJOIN_AFTER_SEC = float(os.getenv("ROS_REJOIN_AFTER_SEC", "20"))
+
+
+def _rejoin(node: DataSubscriber, ex: SingleThreadedExecutor, topic: str):
+    """Tear down the DDS participant and build a new one (a fresh rclpy context)."""
+    ex.remove_node(node)
+    ex.shutdown(timeout_sec=1.0)
+    node.destroy_node()
+    rclpy.shutdown()
+    rclpy.init()
+    node = DataSubscriber(topic)
+    ex = SingleThreadedExecutor()
+    ex.add_node(node)
+    return node, ex
+
+
+def ros_spin_loop(node: DataSubscriber, stop_evt: threading.Event, history: collections.deque, data_ready: threading.Event,
+                  state=None, topic: str = "spi_data"):
     ex = SingleThreadedExecutor()
     ex.add_node(node)
     last_stamp = None
     last_data_time = time.monotonic()
+    last_new_time = time.monotonic()      # last NEW message (get_latest keeps returning the old one)
+    rejoins = 0
     last_append_time = 0.0
     sample_interval = 1.0 / SAMPLE_RATE_HZ
     DATA_TIMEOUT_SEC = 5.0
@@ -54,6 +79,17 @@ def ros_spin_loop(node: DataSubscriber, stop_evt: threading.Event, history: coll
             if i % 50 == 0:
                 print("[ROS] spinning...")
 
+            if REJOIN_AFTER_SEC > 0 and time.monotonic() - last_new_time > REJOIN_AFTER_SEC:
+                node, ex = _rejoin(node, ex, topic)
+                if state is not None:
+                    state.node = node                 # lifespan's shutdown destroys the current one
+                last_new_time = time.monotonic()
+                rejoins += 1
+                if rejoins == 1 or rejoins % 30 == 0:
+                    print(f"[ROS] no new data for {REJOIN_AFTER_SEC:.0f}s: rejoined DDS discovery ({rejoins} times)",
+                          flush=True)
+                continue
+
             data, stamp = node.get_latest()
             if data is None or stamp is None:
                 if not warned and time.monotonic() - last_data_time > DATA_TIMEOUT_SEC:
@@ -67,6 +103,7 @@ def ros_spin_loop(node: DataSubscriber, stop_evt: threading.Event, history: coll
             if last_stamp is not None and stamp <= last_stamp:
                 continue
             last_stamp = stamp
+            last_new_time = time.monotonic()
 
             # Rate limit: only append/broadcast at SAMPLE_RATE_HZ
             now = time.monotonic()
@@ -148,6 +185,7 @@ async def lifespan(app: FastAPI):
     app.state.ros_thread = threading.Thread(
         target=ros_spin_loop,
         args=(app.state.node, app.state.stop_evt, app.state.history, app.state.data_ready),
+        kwargs={"state": app.state, "topic": topic},
         daemon=True
     )
     # start ROS thread
@@ -230,6 +268,24 @@ async def ask_tern(data: dict):
             raise HTTPException(status_code=502, detail="Tern request failed") from exc
 
     return response
+
+@app.post("/tern/stream")
+async def ask_tern_stream(data: dict):
+    """The Tern panel's question, streamed: Tern's progress events (thinking, tool calls) and
+    then the answer, one JSON object per line (application/x-ndjson)."""
+    if tern_lock.locked():
+        raise HTTPException(status_code=409, detail="A Tern question is already in progress")
+    await tern_lock.acquire()
+
+    async def body():
+        try:
+            async for event in tern_client.stream(data):
+                yield json.dumps(event) + "\n"
+        finally:
+            tern_lock.release()
+
+    return StreamingResponse(body(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.post("/bag/start")
 async def bag_start():

@@ -184,6 +184,7 @@ class SocketService {
   private data: SocketData[] = [];
   private dataTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
   private readonly DATA_TIMEOUT_MS = 5000;
+  private lastMessageAt: number | null = null;
 
   private constructor() {}
 
@@ -205,6 +206,7 @@ class SocketService {
 
     this.socket.onmessage = (event: MessageEvent) => {
       const recvMs = Date.now();
+      this.lastMessageAt = recvMs;
       const envelope = JSON.parse(event.data);
       const data = normalizeSocketData(
         envelope.data ?? envelope,
@@ -247,6 +249,11 @@ class SocketService {
 
   public getData(): SocketData[] {
     return this.data;
+  }
+
+  /** Epoch ms of the last live message, or null if none arrived yet. */
+  public getLastMessageAt(): number | null {
+    return this.lastMessageAt;
   }
 
   public getLatestData(): SocketData | null {

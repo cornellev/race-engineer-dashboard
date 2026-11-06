@@ -155,3 +155,59 @@ def test_connect_failure_then_success_recovers():
 def test_malformed_success_responses_map_to_unavailable(response):
     with pytest.raises(tern.TernLLMUnavailable):
         run(make_client(lambda r: response).get_response({}))
+
+
+# ---- /tern/stream: Tern's progress events passed through -------------------------------------
+
+STREAM_URL = "http://tern.test/ask/stream"
+
+
+def collect(client, data=None):
+    async def go():
+        return [e async for e in client.stream(data or {"question": "laps?"}, STREAM_URL)]
+    return run(go())
+
+
+def test_stream_url_defaults_to_ask_stream_next_to_ask():
+    assert tern.TERN_LLM_STREAM_URL.endswith("/ask/stream")
+
+
+def test_stream_passes_events_through_in_order():
+    seen = {}
+    lines = [{"type": "thinking", "turn": 1}, {"type": "tool", "name": "list_laps", "args": {}},
+             {"type": "tool_done", "name": "list_laps", "ok": True, "summary": "3 rows"},
+             {"type": "answer", "text": "3 laps."}]
+
+    def handler(request):
+        seen["url"], seen["body"] = str(request.url), json.loads(request.content)
+        body = "\n".join(json.dumps(x) for x in lines[:2]) + "\n\nnot json\n" + \
+            "\n".join(json.dumps(x) for x in lines[2:]) + "\n"
+        return httpx.Response(200, text=body, headers={"content-type": "application/x-ndjson"})
+
+    assert collect(make_client(handler)) == lines                      # blank and garbage lines skipped
+    assert seen["url"] == STREAM_URL and seen["body"] == {"question": "laps?", "client": "red"}
+
+
+def test_a_tern_without_the_stream_endpoint_falls_back_to_one_ask():
+    def handler(request):
+        if request.url.path == "/ask/stream":
+            return httpx.Response(404)
+        return httpx.Response(200, json={"answer": "Lap 3 was fastest."})
+
+    assert collect(make_client(handler)) == [{"type": "thinking", "turn": 1},
+                                             {"type": "answer", "text": "Lap 3 was fastest."}]
+
+
+@pytest.mark.parametrize("status,word", [(503, "busy"), (429, "busy"), (409, "busy"), (504, "in time"),
+                                         (500, "HTTP 500")])
+def test_stream_errors_become_one_error_event(status, word):
+    events = collect(make_client(lambda request: httpx.Response(status, text="x")))
+    assert len(events) == 1 and events[0]["type"] == "error" and events[0]["status"] == status
+    assert word in events[0]["detail"]
+
+
+def test_an_unreachable_tern_is_an_error_event_not_an_exception():
+    def handler(request):
+        raise httpx.ConnectError("refused")
+
+    assert collect(make_client(handler)) == [{"type": "error", "status": 502, "detail": "Tern is unreachable"}]
