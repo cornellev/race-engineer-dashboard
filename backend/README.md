@@ -1,6 +1,6 @@
 # Backend
 
-FastAPI service that subscribes to the ROS 2 `spi_data` topic and streams snapshots to the frontend over WebSocket. It also proxies rosbag control requests and forwards RaceGPT requests to the RaceGPT analysis service.
+FastAPI service that subscribes to the ROS 2 `spi_data` topic and streams snapshots to the frontend over WebSocket. It also proxies rosbag control requests and forwards questions to Tern (tern-llm).
 
 ## Running the backend
 
@@ -30,7 +30,7 @@ The backend shares the Tailscale service network and is exposed on port `8000`.
 
 - `GET /` basic health response
 - `WS /ws/stream` live telemetry stream for the frontend
-- `POST /racegpt` forwards telemetry to RaceGPT and returns the response
+- `POST /tern` asks Tern (tern-llm on thor) a question (`{"question": "..."}`, or a default "most recent run" question if omitted) and returns `{"answer": ...}`; Tern busy -> 503 with `Retry-After`. Any telemetry sent is ignored
 - `POST /bag/start`, `POST /bag/stop`, and `GET /bag/status` proxy rosbag controls
 - `GET /healthz` reports backend and remote bag-service health
 
@@ -39,6 +39,7 @@ The backend shares the Tailscale service network and is exposed on port `8000`.
 - `ROS_DOMAIN_ID` must match the publisher's DDS domain
 - `ROS_LOCALHOST_ONLY` controls whether ROS discovery is localhost-only
 - `DISCOVERY_SERVER_IP` is used for Fast DDS discovery setup in Docker
-- `TAILSCALE_IP` is used for remote rosbag API requests
-- `RACEGPT_WS_URI` is the websocket endpoint for RaceGPT
-- `RACEGPT_CONNECT_TIMEOUT_SEC`, `RACEGPT_RESPONSE_TIMEOUT_SEC`, and `RACEGPT_REQUEST_TIMEOUT_SEC` control RaceGPT timeouts
+- `TAILSCALE_IP` is used for remote rosbag API requests (the bag service at `http://$TAILSCALE_IP:$ROSBAG_API_PORT`, port default 8080); `BAG_SERVICE_URL` overrides the whole URL (e.g. mock-daq's bag service in a test stack)
+- `TERN_LLM_URL` is tern-llm's `/ask` endpoint (default `http://thor.tail4ccb95.ts.net:8000/ask`, the Jetson Thor by tailnet name)
+- `TERN_LLM_CLIENT` (default `red`) identifies RED to Tern: priority in its queue, and "now / this lap" questions go to the run being recorded
+- `TERN_LLM_CONNECT_TIMEOUT_SEC` (3), `TERN_LLM_RESPONSE_TIMEOUT_SEC` (280, above Tern's own 120 s queue wait + 150 s answer limits, so Tern's clean 503/504 arrives first), `TERN_LLM_CONNECT_RETRIES` (3, connection failures and connect timeouts only), and `TERN_LLM_DEFAULT_QUESTION` tune the bridge

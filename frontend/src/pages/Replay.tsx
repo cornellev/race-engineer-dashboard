@@ -1,3 +1,4 @@
+import { BACKEND_URL } from "../utils/backend";
 import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 import InteractiveGrid from "../layouts/InteractiveGrid";
@@ -309,7 +310,7 @@ function parseReplayCsv(source: string): ParsedReplayResult {
 async function parseReplayRosbag(file: File): Promise<ParsedReplayResult> {
   const fileBytes = await file.arrayBuffer();
 
-  const response = await fetch("http://localhost:8000/replay/rosbag", {
+  const response = await fetch(`${BACKEND_URL}/replay/rosbag`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",

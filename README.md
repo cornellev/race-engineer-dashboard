@@ -12,7 +12,7 @@ Donte & Adi
 
 ## Summary
 
-Live telemetry and analysis for the car: sensor streams (with filtering), derived run metrics, optional **RaceGPT** insights in a sidebar, and a browser-based replay mode for uploaded telemetry exports.
+Live telemetry and analysis for the car: sensor streams (with filtering), derived run metrics, optional **Tern** answers in a sidebar, and a browser-based replay mode for uploaded telemetry exports.
 
 **Sensor views**
 
@@ -34,9 +34,10 @@ Live telemetry and analysis for the car: sensor streams (with filtering), derive
 - **Energy Use** calculated from power
 - **Efficiency** instantaneous and average over a run
 
-**RaceGPT**
+**Tern**
 
-- Configurable manual or automatic LLM requests **that analyze recent telemetry data and return verdicts on improving performance**
+- Configurable manual or automatic questions to Tern, the team's assistant over EVIL's
+  recorded and live run data (laps, turns, energy, efficiency)
 
 ---
 
@@ -53,9 +54,9 @@ Live telemetry and analysis for the car: sensor streams (with filtering), derive
    The frontend client UI should be running on `port 3000`.  
    The backend healthcheck endpoint is on the root of `port 8000`.
 
-   Integration with RaceGPT is done over a websocket connection to a machine running
-   RaceGPT. Connect your machine to the RaceGPT host, and the dashboard should
-   connect when built.
+   Tern runs on thor and is reached over the tailnet (`TERN_LLM_URL`). The browser
+   reaches the backend on port 8000 of whatever host served the page; set
+   `VITE_BACKEND_URL` to point it somewhere else.
 
 2. **Frontend Testing**
 
@@ -102,10 +103,11 @@ Make sure this matches the ip in the `docker-compose.yml` file.
 
 We set it manually, not via env var, because the publisher IP should not change.
 
-## RaceGPT Integration
+## Tern Integration
 
-Connect your machine to another machine running **RaceGPT** so the dashboard can
-reach the RaceGPT websocket service and request analysis on live telemetry snapshots.
+The sidebar asks **Tern** (tern-llm on thor) through the backend's `POST /tern`. Tern answers
+from EVIL's data, including the run being recorded right now, so the dashboard machine only
+needs to reach thor over the tailnet.
 
 As mentioned above, there are two modes for requesting responses on the sidebar.
 
@@ -165,7 +167,7 @@ skipped during import.
 ```
 ROS2 Sensors → Backend (Python + ROS2) → WebSocket Stream → Frontend (React + TypeScript + Bun)
                                           ↓
-                                  RaceGPT Integration
+                                  Tern (via POST /tern)
 
 Uploaded CSV → Frontend Replay Parser → Replay Timeline → Shared Dashboard Widgets
 Uploaded ROS bag `.db3` → Backend Bag Parser → Replay Timeline → Shared Dashboard Widgets
@@ -173,14 +175,15 @@ Uploaded ROS bag `.db3` → Backend Bag Parser → Replay Timeline → Shared Da
 
 ---
 
-## RaceGPT Integration Flow
+## Tern Integration Flow
 
-RaceGPT is integrated as an **on-demand analysis layer**.
+Tern is an **on-demand analysis layer**.
 
-1. The frontend sends telemetry history to the backend via a POST request
-2. The backend forwards this data over a **USB WebSocket connection** to the RaceGPT machine (`/ws/analyze`)
-3. RaceGPT processes the data and returns a **verdict/analysis**
-4. The backend relays the response back to the frontend
+1. The frontend sends a request to the backend's `POST /tern`
+2. The backend forwards a question to tern-llm's `/ask` on thor, as client `red` (RED gets a
+   priority lane in Tern's queue, and "now / this lap" questions go to the run being recorded)
+3. Tern looks the numbers up in EVIL and returns `{"answer": ...}`
+4. The backend relays it to the frontend (Tern busy -> 503 with `Retry-After`)
 5. The frontend displays the result in the sidebar (manual or automatic modes)
 
 ---

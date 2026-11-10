@@ -1,3 +1,4 @@
+import { BACKEND_URL } from "../utils/backend";
 import { useEffect, useMemo, useState } from "react";
 import { GaugeContainer, GaugeReferenceArc } from "@mui/x-charts/Gauge";
 import MapComponent from "../components/MapComponent";
@@ -333,7 +334,7 @@ export default function InteractiveGrid({
 
     try {
       const response = await fetch(
-        `http://localhost:8000/bag/${runSession.isRunning ? "stop" : "start"}`,
+        `${BACKEND_URL}/bag/${runSession.isRunning ? "stop" : "start"}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -392,7 +393,10 @@ export default function InteractiveGrid({
             </GaugeContainer>
 
             <div className="mb-3 flex flex-1 flex-col items-center text-right xl:items-end">
-              <strong className="text-5xl leading-none font-semibold tabular-nums text-white lg:text-4xl 2xl:text-6xl">
+              <strong
+                className="text-5xl leading-none font-semibold tabular-nums text-white lg:text-4xl 2xl:text-6xl"
+                data-testid="speed-mph"
+              >
                 {formatValue(latestSpeed, 1)}
               </strong>
               <span className="mt-1 text-sm uppercase tracking-[0.2em] text-white/55">
@@ -403,6 +407,7 @@ export default function InteractiveGrid({
 
           <div className="h-1/3">
             <MetricPanel
+              testId="max-speed"
               label="Max"
               value={
                 runSession.lastSpeed
@@ -430,6 +435,7 @@ export default function InteractiveGrid({
         <div className="flex h-full flex-col justify-between gap-4 lg:gap-2">
           <div className="grid grid-cols-2 gap-3">
             <MetricPanel
+              testId="instant-efficiency"
               label="Instant Efficiency"
               value={
                 instantEfficiency
@@ -448,6 +454,7 @@ export default function InteractiveGrid({
             />
 
             <MetricPanel
+              testId="average-efficiency"
               label="Average Efficiency"
               value={
                 runSession.energyKilowattHours > 0
@@ -466,6 +473,7 @@ export default function InteractiveGrid({
             />
 
             <MetricPanel
+              testId="run-distance"
               label="Distance"
               value={
                 runSession.startTimestamp
@@ -482,6 +490,7 @@ export default function InteractiveGrid({
             />
 
             <MetricPanel
+              testId="run-energy"
               label="Energy Used"
               value={
                 runSession.startTimestamp
@@ -524,11 +533,15 @@ export default function InteractiveGrid({
           ) : null}
 
           <div className="flex items-center justify-between gap-0 rounded-[0.95rem] border border-white/8 bg-white/4 px-3 py-2.5 sm:gap-2">
-            <strong className="text-3xl leading-none font-semibold tabular-nums text-white sm:5xl 2xl:text-6xl">
+            <strong
+              className="text-3xl leading-none font-semibold tabular-nums text-white sm:5xl 2xl:text-6xl"
+              data-testid="run-timer"
+            >
               {runTimerLabel}
             </strong>
 
             <p
+              data-testid="record-warning"
               className={`wrap hidden overflow-x-scroll text-center text-sm text-white/55 opacity-0 transition-opacity duration-1000 ease-in-out [scrollbar-width:none] [-ms-overflow-style:none] sm:block lg:hidden xl:block [&::-webkit-scrollbar]:hidden ${warn.value ? "opacity-100" : "opacity-0"}`}
             >
               {warn.message}
@@ -539,6 +552,7 @@ export default function InteractiveGrid({
                 <button
                   className="rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] transition focus:outline-0"
                   onClick={handleLap}
+                  data-testid="lap-button"
                 >
                   Lap
                 </button>
@@ -548,6 +562,8 @@ export default function InteractiveGrid({
                 type="button"
                 className="rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] transition focus:outline-0"
                 onClick={toggleRunTracking}
+                data-testid="record-button"
+                data-recording={runSession.isRunning ? "true" : "false"}
               >
                 {runSession.isRunning ? "Stop" : "Start"}
               </button>
@@ -570,6 +586,7 @@ export default function InteractiveGrid({
       >
         {history.length > 0 ? (
           <CompactChart
+            testId="speed-power-chart"
             accentColor="#fb923c"
             currentValue={`${formatValue((speedHistory.reduce((accumulator, currentValue) => accumulator + currentValue) / (speedHistory.length > 0 ? speedHistory.length : 1)) * 2.23694, 1)} mph`}
             unit="mph"
@@ -645,10 +662,12 @@ export default function InteractiveGrid({
           <SignalTile label="Power">
             <div className="grid h-full grid-rows-2 gap-3 rows-auto-fr">
               <SignalTile
+                testId="current-a"
                 label="Current"
                 value={`${formatValue(latest?.power.current ?? 0, 1)} A`}
               />
               <SignalTile
+                testId="voltage-v"
                 label="Voltage"
                 value={`${formatValue(latest?.power.voltage ?? 0, 1)} V`}
               />

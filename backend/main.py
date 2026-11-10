@@ -1,4 +1,5 @@
 import asyncio
+import json
 import threading
 import contextlib
 import collections
@@ -8,19 +9,19 @@ import tempfile
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, HTTPException, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from subscriber import DataSubscriber
 from contextlib import asynccontextmanager
 import math
-import racegpt as racegpt_module
+import tern as tern_client
 import httpx
 
 from rosbag_replay import parse_rosbag_to_csv_rows
 
 DEQUE_SIZE = 1000 # for snapshot
 SAMPLE_RATE_HZ = 40  # rate at which we send data to frontend
-RACEGPT_REQUEST_TIMEOUT_SEC = float(os.getenv("RACEGPT_REQUEST_TIMEOUT_SEC", "20"))
 
 def sanitize_json(x):
     if isinstance(x, float):
@@ -35,11 +36,34 @@ def sanitize_json(x):
         return [sanitize_json(v) for v in x]
     return x
 
-def ros_spin_loop(node: DataSubscriber, stop_evt: threading.Event, history: collections.deque, data_ready: threading.Event):
+# After this long with no NEW message, rejoin DDS discovery (new participant). Found in the EVIL
+# end-to-end stack: when the Fast DDS discovery server restarts (the car rebooting), an already-
+# running subscriber is never matched to the car's new publisher, so the dashboard stays dark
+# until the backend is restarted. Rejoining is cheap when the car is simply off.
+REJOIN_AFTER_SEC = float(os.getenv("ROS_REJOIN_AFTER_SEC", "20"))
+
+
+def _rejoin(node: DataSubscriber, ex: SingleThreadedExecutor, topic: str):
+    """Tear down the DDS participant and build a new one (a fresh rclpy context)."""
+    ex.remove_node(node)
+    ex.shutdown(timeout_sec=1.0)
+    node.destroy_node()
+    rclpy.shutdown()
+    rclpy.init()
+    node = DataSubscriber(topic)
+    ex = SingleThreadedExecutor()
+    ex.add_node(node)
+    return node, ex
+
+
+def ros_spin_loop(node: DataSubscriber, stop_evt: threading.Event, history: collections.deque, data_ready: threading.Event,
+                  state=None, topic: str = "spi_data"):
     ex = SingleThreadedExecutor()
     ex.add_node(node)
     last_stamp = None
     last_data_time = time.monotonic()
+    last_new_time = time.monotonic()      # last NEW message (get_latest keeps returning the old one)
+    rejoins = 0
     last_append_time = 0.0
     sample_interval = 1.0 / SAMPLE_RATE_HZ
     DATA_TIMEOUT_SEC = 5.0
@@ -55,6 +79,17 @@ def ros_spin_loop(node: DataSubscriber, stop_evt: threading.Event, history: coll
             if i % 50 == 0:
                 print("[ROS] spinning...")
 
+            if REJOIN_AFTER_SEC > 0 and time.monotonic() - last_new_time > REJOIN_AFTER_SEC:
+                node, ex = _rejoin(node, ex, topic)
+                if state is not None:
+                    state.node = node                 # lifespan's shutdown destroys the current one
+                last_new_time = time.monotonic()
+                rejoins += 1
+                if rejoins == 1 or rejoins % 30 == 0:
+                    print(f"[ROS] no new data for {REJOIN_AFTER_SEC:.0f}s: rejoined DDS discovery ({rejoins} times)",
+                          flush=True)
+                continue
+
             data, stamp = node.get_latest()
             if data is None or stamp is None:
                 if not warned and time.monotonic() - last_data_time > DATA_TIMEOUT_SEC:
@@ -68,6 +103,7 @@ def ros_spin_loop(node: DataSubscriber, stop_evt: threading.Event, history: coll
             if last_stamp is not None and stamp <= last_stamp:
                 continue
             last_stamp = stamp
+            last_new_time = time.monotonic()
 
             # Rate limit: only append/broadcast at SAMPLE_RATE_HZ
             now = time.monotonic()
@@ -149,6 +185,7 @@ async def lifespan(app: FastAPI):
     app.state.ros_thread = threading.Thread(
         target=ros_spin_loop,
         args=(app.state.node, app.state.stop_evt, app.state.history, app.state.data_ready),
+        kwargs={"state": app.state, "topic": topic},
         daemon=True
     )
     # start ROS thread
@@ -165,7 +202,7 @@ async def lifespan(app: FastAPI):
         with contextlib.suppress(asyncio.CancelledError):
             await app.state.broadcaster_task
         
-        await racegpt_module.close()
+        await tern_client.close()
 
         app.state.node.destroy_node()
         rclpy.shutdown()
@@ -187,8 +224,15 @@ def root():
     return {"message": "Race Telemetry API", "status": "running"}
 
 def get_remote_bag_base_url() -> str:
+    """The car's bag service (tailscale-ros-telemetry api/server.py), which the record
+    button starts and stops. BAG_SERVICE_URL wins (e.g. mock-daq's bag service in the
+    end-to-end stack); otherwise the car's TAILSCALE_IP on ROSBAG_API_PORT (default 8080)."""
+    explicit = os.getenv("BAG_SERVICE_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
     tailscale_ip = os.getenv("TAILSCALE_IP")
-    return f"http://{tailscale_ip}:8080"
+    port = os.getenv("ROSBAG_API_PORT", "8080").strip() or "8080"
+    return f"http://{tailscale_ip}:{port}"
 
 async def forward_bag_request(method: str, path: str) -> Response:
     url = f"{get_remote_bag_base_url()}{path}"
@@ -202,24 +246,46 @@ async def forward_bag_request(method: str, path: str) -> Response:
         media_type=content_type,
     )
 
-racegpt_lock = asyncio.Lock()
+tern_lock = asyncio.Lock()
 
-@app.post("/racegpt")
-async def racegpt(data: dict):
-    if racegpt_lock.locked():
-        raise HTTPException(status_code=409, detail="RaceGPT reasoning already in progress")
+@app.post("/tern")
+async def ask_tern(data: dict):
+    if tern_lock.locked():
+        raise HTTPException(status_code=409, detail="A Tern question is already in progress")
 
-    async with racegpt_lock:
+    async with tern_lock:
         try:
-            print("called race-gpt...",flush=True)
-            response = await racegpt_module.get_response(data)
-        except RuntimeError as exc:
-            message = str(exc)
-            if "timed out" in message.lower():
-                raise HTTPException(status_code=504, detail="RaceGPT device did not respond") from exc
-            raise HTTPException(status_code=502, detail="RaceGPT request failed") from exc
+            response = await tern_client.get_response(data)
+        except tern_client.TernLLMBusy as exc:
+            headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+            raise HTTPException(
+                status_code=503, detail="Tern is busy answering other questions, try again shortly",
+                headers=headers,
+            ) from exc
+        except tern_client.TernLLMTimeout as exc:
+            raise HTTPException(status_code=504, detail="Tern did not respond in time") from exc
+        except tern_client.TernLLMUnavailable as exc:
+            raise HTTPException(status_code=502, detail="Tern request failed") from exc
 
     return response
+
+@app.post("/tern/stream")
+async def ask_tern_stream(data: dict):
+    """The Tern panel's question, streamed: Tern's progress events (thinking, tool calls) and
+    then the answer, one JSON object per line (application/x-ndjson)."""
+    if tern_lock.locked():
+        raise HTTPException(status_code=409, detail="A Tern question is already in progress")
+    await tern_lock.acquire()
+
+    async def body():
+        try:
+            async for event in tern_client.stream(data):
+                yield json.dumps(event) + "\n"
+        finally:
+            tern_lock.release()
+
+    return StreamingResponse(body(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.post("/bag/start")
 async def bag_start():
